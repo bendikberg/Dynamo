@@ -2093,7 +2093,7 @@ namespace Dynamo.Graph.Workspaces
         /// <returns></returns>
         internal bool containsXmlDummyNodes()
         {
-            return this.Nodes.OfType<DummyNode>().Where(node => node.OriginalNodeContent is XmlElement).Count() > 0;
+            return this.Nodes.OfType<DummyNode>().Any(node => node.OriginalNodeContent is XmlElement);
         }
 
         /// <summary>
@@ -2582,8 +2582,8 @@ namespace Dynamo.Graph.Workspaces
                 var annotationGuidValue = IdToGuidConverter(annotationViewInfo.Id);
                 var text = annotationViewInfo.Title;
 
-                var pinnedNode = this.Nodes.
-                    FirstOrDefault(x => x.GUID.ToString("N") == annotationViewInfo.PinnedNode);
+                Guid.TryParse(annotationViewInfo.PinnedNode, out var pinnedNodeId);
+                TryFindNode(pinnedNodeId, out var pinnedNode);
 
                 NoteModel noteModel;
                 if (offsetX == 0.0 && offsetY == 0.0)
@@ -2658,65 +2658,40 @@ namespace Dynamo.Graph.Workspaces
 
         private void LoadAnnotation(ExtraAnnotationViewInfo annotationViewInfo)
         {
-            var annotationGuidValue = IdToGuidConverter(annotationViewInfo.Id);
-
-            if (annotationViewInfo.Nodes == null || Annotations.Any(x => x.GUID == annotationGuidValue))
-            {
-                return;
-            }
+            if (annotationViewInfo.Nodes == null) return;
 
             // If count is zero, this is a note, not an annotation
-            if (annotationViewInfo.Nodes.Count() == 0) return;
+            if (!annotationViewInfo.Nodes.Any()) return;
+
+            var annotationGuidValue = IdToGuidConverter(annotationViewInfo.Id);
+            if (TryFindAnnotation(annotationGuidValue, out var _)) return;
 
 
-            var text = annotationViewInfo.Title;
-
-            // Create a collection of nodes in the given annotation
+            // Create collections of nodes, notes and groups in the given annotation
             var nodes = new List<NodeModel>();
-            foreach (string nodeId in annotationViewInfo.Nodes)
-            {
-                var guidValue = IdToGuidConverter(nodeId);
-                if (guidValue == null)
-                    continue;
-
-                // NOTE: Some nodes may be annotations and not be found here
-                var nodeModel = Nodes.FirstOrDefault(node => node.GUID == guidValue);
-                if (nodeModel == null)
-                    continue;
-
-                nodes.Add(nodeModel);
-            }
-
-            // Create a collection of notes in the given annotation
             var notes = new List<NoteModel>();
-            foreach (string noteId in annotationViewInfo.Nodes)
-            {
-                var guidValue = IdToGuidConverter(noteId);
-                if (guidValue == null)
-                    continue;
-
-                // NOTE: Some nodes may not be annotations and not be found here
-                var noteModel = Notes.FirstOrDefault(note => note.GUID == guidValue);
-                if (noteModel == null)
-                    continue;
-
-                notes.Add(noteModel);
-            }
-
             var groups = new List<AnnotationModel>();
-            foreach (var groupId in annotationViewInfo.Nodes)
+            foreach (string maybeGuid in annotationViewInfo.Nodes)
             {
-                var guidValue = IdToGuidConverter(groupId);
-                if (guidValue == null) continue;
+                var guidValue = IdToGuidConverter(maybeGuid);
+                if (guidValue == Guid.Empty) continue; // the guid cannot be null, but it can be empty
 
-                var group = Annotations.FirstOrDefault(g => g.GUID == guidValue);
-                if (group == null) continue;
-
-                groups.Add(group);
+                if (TryFindNode(guidValue, out var nodeModel))
+                {
+                    nodes.Add(nodeModel);
+                }
+                else if (TryFindNote(guidValue, out var noteModel))
+                {
+                    notes.Add(noteModel);
+                }
+                else if (TryFindAnnotation(guidValue, out var group))
+                {
+                    groups.Add(group);
+                }
             }
 
             var annotationModel = new AnnotationModel(nodes, notes, groups);
-            annotationModel.AnnotationText = text;
+            annotationModel.AnnotationText = annotationViewInfo.Title;
             annotationModel.AnnotationDescriptionText = annotationViewInfo.DescriptionText;
             annotationModel.IsExpanded = annotationViewInfo.IsExpanded;
             annotationModel.FontSize = annotationViewInfo.FontSize;
@@ -2729,18 +2704,13 @@ namespace Dynamo.Graph.Workspaces
             annotationModel.ModelBaseRequested += annotationModel_GetModelBase;
             annotationModel.Disposed += (_) => annotationModel.ModelBaseRequested -= annotationModel_GetModelBase;
 
-            //if this group/annotation does not exist, add it to the workspace.
-            var matchingAnnotation = this.Annotations.FirstOrDefault(x => x.GUID == annotationModel.GUID);
-            if (matchingAnnotation == null)
-            {
-                this.AddNewAnnotation(annotationModel);
-            }
+            // this group/annotation does not exist in workspace (checked upon entering method), it's safe to add
+            AddNewAnnotation(annotationModel);
         }
 
         internal static Guid IdToGuidConverter(string id)
         {
-            Guid deterministicGuid;
-            if (!Guid.TryParse(id, out deterministicGuid))
+            if (!Guid.TryParse(id, out var deterministicGuid))
             {
                 Debug.WriteLine("The id was not a guid, converting to a guid");
                 deterministicGuid = GuidUtility.Create(GuidUtility.UrlNamespace, id);

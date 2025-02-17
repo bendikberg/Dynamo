@@ -3359,7 +3359,7 @@ namespace Dynamo.ViewModels
             OnRequestSaveImage(this, new ImageSaveEventArgs(parameters.ToString()));
 
             Dynamo.Logging.Analytics.TrackTaskCommandEvent("ImageCapture",
-                "NodeCount", CurrentSpace.Nodes.Count());
+                "NodeCount", CurrentSpace.NodeCount);
         }
 
         private void Save3DImage(object parameters)
