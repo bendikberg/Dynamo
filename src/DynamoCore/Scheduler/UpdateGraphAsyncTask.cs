@@ -79,8 +79,7 @@ namespace Dynamo.Scheduler
                 // graph is in wrong state.
                 foreach (var nodeGuid in graphSyncData.NodeIDs)
                 {
-                    var node = workspace.Nodes.FirstOrDefault(n => n.GUID.Equals(nodeGuid));
-                    if (node != null)
+                    if (workspace.TryFindNode(nodeGuid, out var node))
                         node.ClearDirtyFlag();
                 }
 
@@ -140,8 +139,7 @@ namespace Dynamo.Scheduler
                 var executedNodeGuids = engineController.GetExecutedAstGuids(graphSyncData.SessionID);
                 foreach (var guid in executedNodeGuids)
                 {
-                    var node = TargetedWorkspace.Nodes.FirstOrDefault(n => n.GUID.Equals(guid));
-                    if (node != null)
+                    if (TargetedWorkspace.TryFindNode(guid, out var node))
                     {
                         executedNodes.Add(node);
                     }

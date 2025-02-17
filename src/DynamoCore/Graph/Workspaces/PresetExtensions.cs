@@ -66,7 +66,7 @@ namespace Dynamo.Graph.Workspaces
                 {
                     //check that node still exists in this workspace,
                     //otherwise bail on this node, check by GUID instead of nodemodel
-                    if (workspace.Nodes.Select(x => x.GUID).Contains(node.GUID))
+                    if (workspace.TryFindNode(node.GUID, out _))
                     {
                         var originalpos = node.Position;
                         var serializedNode = state.SerializedNodes.ToList().Find(x => Guid.Parse(x.GetAttribute("guid")) == node.GUID);
@@ -93,7 +93,7 @@ namespace Dynamo.Graph.Workspaces
         internal static PresetModel AddPreset(this WorkspaceModel workspace, string name, string description, IEnumerable<Guid> IDSToSave)
         {
             //lookup the nodes by their ID, can also check that we find all of them....
-            var nodesFromIDs = workspace.Nodes.Where(node => IDSToSave.Contains(node.GUID));
+            var nodesFromIDs = IDSToSave.Select(workspace.FindNode).Where(n => n != null);
             //access the presetsCollection and add a new state based on the current selection
             var newpreset = AddPresetCore(workspace, name, description, nodesFromIDs);
             workspace.HasUnsavedChanges = true;

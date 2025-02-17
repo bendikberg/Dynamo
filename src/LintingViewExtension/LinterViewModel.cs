@@ -106,18 +106,14 @@ namespace Dynamo.LintingViewExtension
 
         private void SelectIssueNodeCommandExecute(object nodeId)
         {
-            if (!(nodeId is string id)) return;
-
-            var nodes = viewLoadedParams.CurrentWorkspaceModel.Nodes;
-            if (nodes is null || !nodes.Any()) { return; }
-
-            var selectedNode = nodes.Where(x => x.GUID.ToString() == id).FirstOrDefault();
-            if (selectedNode is null) { return; }
-
-            var cmd = new DynamoModel.SelectInRegionCommand(selectedNode.Rect, false);
-            this.viewLoadedParams.CommandExecutive.ExecuteCommand(cmd, null, null);
-
-            this.viewLoadedParams.ViewModelCommandExecutive.FitViewCommand();
+            if (nodeId is string id &&
+                Guid.TryParse(id, out var guid) &&
+                viewLoadedParams.CurrentWorkspaceModel.TryFindNode(guid, out var selectedNode))
+            {
+                var cmd = new DynamoModel.SelectInRegionCommand(selectedNode.Rect, false);
+                viewLoadedParams.CommandExecutive.ExecuteCommand(cmd, null, null);
+                viewLoadedParams.ViewModelCommandExecutive.FitViewCommand();
+            }
         }
 
         private void AddNewNodeIssue(string issueNodeId, string ruleId)
@@ -279,12 +275,12 @@ namespace Dynamo.LintingViewExtension
                 throw new ArgumentNullException(nameof(nodeId));
             }
 
-            var node = viewLoadedParams.CurrentWorkspaceModel
-                .Nodes
-                .Where(n => n.GUID.ToString() == nodeId)
-                .FirstOrDefault();
+            if (Guid.TryParse(nodeId, out var guid) && viewLoadedParams.CurrentWorkspaceModel.TryFindNode(guid, out var node))
+            {
+                return node;
+            }
 
-            return node;
+            return null;
         }
 
         public void Dispose()

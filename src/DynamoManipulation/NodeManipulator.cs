@@ -403,7 +403,7 @@ namespace Dynamo.Manipulation
 
             CommandExecutive.ExecuteCommand(command, UniqueId, ExtensionName);
 
-            var inputNode = WorkspaceModel.Nodes.FirstOrDefault(node => node.GUID == command.ModelGuid) as DoubleSlider;
+            var inputNode = WorkspaceModel.FindNode(command.ModelGuid) as DoubleSlider;
 
             if (inputNode != null)
             {

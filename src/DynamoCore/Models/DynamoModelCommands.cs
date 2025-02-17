@@ -178,32 +178,24 @@ namespace Dynamo.Models
             var nodeId = command.ModelGuid;
 
             // find nodes with of the same type with the same GUID
-            var query = CurrentWorkspace.Nodes.Where(n => n.GUID.Equals(nodeId) && n.Name.Equals(name));
-
             // safely ignore a node of the same type with the same GUID
-            if (query.Any())
+            if (CurrentWorkspace.TryFindNode(nodeId, out var found) && found.Name.Equals(name))
             {
-                return query.First();
+                return found;
             }
 
-            // To be used in the event it's a custom node we're making.
-            Guid customNodeId;
-
-            if (command is CreateProxyNodeCommand)
+            if (command is CreateProxyNodeCommand proxyCommand)
             {
-                var proxyCommand = command as CreateProxyNodeCommand;
-
                 return NodeFactory.CreateProxyNodeInstance(nodeId, name,
                     proxyCommand.NickName, proxyCommand.Inputs, proxyCommand.Outputs);
             }
 
             // Then, we have to figure out what kind of node to make, based on the name.
-
             NodeModel node = CreateNodeFromNameOrType(nodeId, name);
             if (node != null) return node;
 
             // And if that didn't work, then it must be a custom node.
-            if (Guid.TryParse(name, out customNodeId))
+            if (Guid.TryParse(name, out var customNodeId))
             {
                 node = CustomNodeManager.CreateCustomNodeInstance(customNodeId, null, false);
                 node.GUID = nodeId;
@@ -365,8 +357,9 @@ namespace Dynamo.Models
             bool isInPort = portType == PortType.Input;
             activeStartPorts = null;
 
-            if (!(CurrentWorkspace.GetModelInternal(nodeId) is NodeModel node))
+            if (!CurrentWorkspace.TryFindNode(nodeId, out var node))
                 return;
+
             PortModel portModel = isInPort ? node.InPorts[portIndex] : node.OutPorts[portIndex];
 
             // Test if port already has a connection, if so grab it and begin connecting 
@@ -379,7 +372,7 @@ namespace Dynamo.Models
                 // and remove it from the connectors collection. This will also
                 // remove the view model.
                 ConnectorModel connector = portModel.Connectors[0];
-                if (CurrentWorkspace.Connectors.Contains(connector))
+                if (CurrentWorkspace.TryFindConnector(connector.GUID, out _))
                 {
                     var models = new List<ModelBase> { connector };
                     CurrentWorkspace.SaveAndDeleteModels(models);
@@ -596,17 +589,14 @@ namespace Dynamo.Models
             if (command.ModelGuid == Guid.Empty)
                 return;
 
-            var modelsToGroup = command.ModelGuids.Select(guid => CurrentWorkspace.GetModelInternal(guid)).ToList();
-            if (modelsToGroup.OfType<NodeModel>().Any())
+            var modelsToGroup = command.ModelGuids.Select(CurrentWorkspace.GetModelInternal).ToList();
+            var nodeModels = modelsToGroup.OfType<NodeModel>().ToHashSet();
+            if (nodeModels.Count > 0)
             {
-                var nodeModels = modelsToGroup.OfType<NodeModel>();
                 var pinnedNotes = CurrentWorkspace.Notes
                     .Where(x => x.PinnedNode != null && nodeModels.Contains(x.PinnedNode));
 
-                if (pinnedNotes.Any())
-                {
-                    modelsToGroup.AddRange(pinnedNotes);
-                }
+                modelsToGroup.AddRange(pinnedNotes);
             }
 
             AddToGroup(modelsToGroup);
