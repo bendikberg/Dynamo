@@ -13,13 +13,15 @@ namespace Dynamo.Utilities
     {
         private readonly Dictionary<TKey, LinkedListNode> _dictionary;
 
-        private readonly LinkedList _values;
+        private readonly ValueCollection _values;
+        private readonly KeyCollection _keys;
         private LinkedListNode? _head;
         private LinkedListNode? _tail;
 
         public InsertionOrderedDict()
         {
-            _values = new LinkedList(this);
+            _keys = new KeyCollection(this);
+            _values = new ValueCollection(this);
             _dictionary = new();
         }
 
@@ -27,7 +29,8 @@ namespace Dynamo.Utilities
         {
             ArgumentNullException.ThrowIfNull(values, nameof(values));
 
-            _values = new LinkedList(this);
+            _keys = new KeyCollection(this);
+            _values = new ValueCollection(this);
 
             if (values.TryGetNonEnumeratedCount(out var count))
             {
@@ -47,13 +50,19 @@ namespace Dynamo.Utilities
 
         public TValue this[TKey key]
         {
-            get => _dictionary[key].Value;
+            get => _dictionary[key].KeyValuePair.Value;
             set => Add(key, value, true);
         }
 
-        public ICollection<TKey> Keys => _dictionary.Keys;
+        public ICollection<TKey> Keys => _keys;
 
         public ICollection<TValue> Values => _values;
+
+        public IEnumerable<TKey> UnorderedKeys => _dictionary.Keys;
+
+        public IEnumerable<TValue> UnorderedValues => _dictionary.Values.Select(node => node.KeyValuePair.Value);
+
+        public IEnumerable<KeyValuePair<TKey, TValue>> UnorderedPairs => _dictionary.Values.Select(node => node.KeyValuePair);
 
         public int Count => _dictionary.Count;
 
@@ -100,7 +109,7 @@ namespace Dynamo.Utilities
         private void AddInner(TKey key, TValue value)
         {
             // adding the tail is always safe, as it should be empty if this is the first node
-            var node = new LinkedListNode { Value = value, Prev = _tail };
+            var node = new LinkedListNode { KeyValuePair = new KeyValuePair<TKey, TValue>(key, value), Prev = _tail };
             _dictionary.Add(key, node);
 
             // this only happens when adding the first node
@@ -158,8 +167,7 @@ namespace Dynamo.Utilities
 
         public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
         {
-            var enumerable = _dictionary.Select(kv => new KeyValuePair<TKey, TValue>(kv.Key, kv.Value.Value));
-            return enumerable.GetEnumerator();
+            return new KeyValueEnumerator(this);
         }
 
         public bool Remove(TKey key)
@@ -181,7 +189,7 @@ namespace Dynamo.Utilities
             value = default;
             if (_dictionary.TryGetValue(key, out var node))
             {
-                value = node.Value;
+                value = node.KeyValuePair.Value;
                 return true;
             }
             return false;
@@ -191,7 +199,7 @@ namespace Dynamo.Utilities
 
         private class LinkedListNode
         {
-            public TValue Value;
+            public KeyValuePair<TKey, TValue> KeyValuePair;
             public LinkedListNode Prev = null;
             public LinkedListNode Next = null;
 
@@ -199,24 +207,32 @@ namespace Dynamo.Utilities
             public bool IsTail => Next == null;
         }
 
-        private class LinkedListEnumerator : IEnumerator<TValue>
+        private abstract class BaseEnumerator<T> : IEnumerator<T>
         {
-            InsertionOrderedDict<TKey, TValue> _dict;
-            bool _hasStarted = false;
-            LinkedListNode? _current;
-
-            public LinkedListEnumerator(InsertionOrderedDict<TKey, TValue> dict)
-            {
-                _dict = dict;
-            }
-
-            public TValue Current => _current == null ? default : _current.Value;
+            public abstract T Current { get; }
 
             object IEnumerator.Current => Current;
 
-            public void Dispose() { }
+            public virtual void Reset() => throw new NotSupportedException();
 
-            public bool MoveNext()
+            public virtual void Dispose() { }
+
+            public abstract bool MoveNext();
+        }
+
+        private class KeyValueEnumerator(InsertionOrderedDict<TKey, TValue> dict) : BaseEnumerator<KeyValuePair<TKey, TValue>>
+        {
+            private readonly InsertionOrderedDict<TKey, TValue> _dict = dict;
+            private bool _hasStarted = false;
+            private LinkedListNode? _current = null;
+
+            public override KeyValuePair<TKey, TValue> Current => _current == null ? default : _current.KeyValuePair;
+
+            public TKey Key => _current == null ? default : _current.KeyValuePair.Key;
+
+            public TValue Value => _current == null ? default : _current.KeyValuePair.Value;
+
+            public override bool MoveNext()
             {
                 if (!_hasStarted)
                 {
@@ -232,15 +248,30 @@ namespace Dynamo.Utilities
 
                 return false;
             }
-
-            public void Reset() => throw new NotSupportedException();
         }
 
-        private class LinkedList : ICollection<TValue>
+        private abstract class LinkedListEnumerator<T>(InsertionOrderedDict<TKey, TValue> dict) : BaseEnumerator<T>
         {
-            private InsertionOrderedDict<TKey, TValue> _dict;
+            protected readonly KeyValueEnumerator _innerEnumerator = new(dict);
 
-            public LinkedList(InsertionOrderedDict<TKey, TValue> dict)
+            public override bool MoveNext() => _innerEnumerator.MoveNext();
+        }
+
+        private class ValueEnumerator(InsertionOrderedDict<TKey, TValue> dict) : LinkedListEnumerator<TValue>(dict)
+        {
+            public override TValue Current => _innerEnumerator.Value;
+        }
+
+        private class KeyEnumerator(InsertionOrderedDict<TKey, TValue> dict) : LinkedListEnumerator<TKey>(dict)
+        {
+            public override TKey Current => _innerEnumerator.Key;
+        }
+
+        private abstract class KeyValueCollection<T> : ICollection<T>
+        {
+            protected InsertionOrderedDict<TKey, TValue> _dict;
+
+            public KeyValueCollection(InsertionOrderedDict<TKey, TValue> dict)
             {
                 _dict = dict;
             }
@@ -249,13 +280,13 @@ namespace Dynamo.Utilities
 
             public bool IsReadOnly => true;
 
-            public void Add(TValue item) => throw new NotSupportedException();
+            public void Add(T item) => throw new NotSupportedException();
 
             public void Clear() => throw new NotSupportedException();
 
-            public bool Remove(TValue item) => throw new NotSupportedException();
+            public bool Remove(T item) => throw new NotSupportedException();
 
-            public void CopyTo(TValue[] array, int arrayIndex)
+            public void CopyTo(T[] array, int arrayIndex)
             {
                 foreach(var value in this)
                 {
@@ -265,9 +296,16 @@ namespace Dynamo.Utilities
 
             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-            public IEnumerator<TValue> GetEnumerator() => new LinkedListEnumerator(_dict);
+            public abstract IEnumerator<T> GetEnumerator();
 
-            public bool Contains(TValue item)
+            public abstract bool Contains(T item);
+        }
+
+        private class ValueCollection(InsertionOrderedDict<TKey, TValue> dict) : KeyValueCollection<TValue>(dict)
+        {
+            public override IEnumerator<TValue> GetEnumerator() => new ValueEnumerator(_dict);
+
+            public override bool Contains(TValue item)
             {
                 foreach(var value in this)
                 {
@@ -279,7 +317,13 @@ namespace Dynamo.Utilities
 
                 return false;
             }
+        }
 
+        private class KeyCollection(InsertionOrderedDict<TKey, TValue> dict) : KeyValueCollection<TKey>(dict)
+        {
+            public override IEnumerator<TKey> GetEnumerator() => new KeyEnumerator(_dict);
+
+            public override bool Contains(TKey item) => _dict.ContainsKey(item);
         }
     }
 }
