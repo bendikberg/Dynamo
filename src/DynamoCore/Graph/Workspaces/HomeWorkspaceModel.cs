@@ -694,8 +694,7 @@ namespace Dynamo.Graph.Workspaces
             var workspace = updateTask.TargetedWorkspace;
             foreach (var warning in warnings)
             {
-                var guid = warning.Key;
-                if (!workspace.TryFindNode(guid, out var node))
+                if (!workspace.TryFindNode(warning.Key, out var node))
                     continue;
 
                 // Block Infos updates during the many errors/warnings/notifications added here
@@ -713,8 +712,7 @@ namespace Dynamo.Graph.Workspaces
             // Update node info message.
             foreach (var info in updateTask.RuntimeInfos)
             {
-                var guid = info.Key;
-                if (!workspace.TryFindNode(guid, out var node))
+                if (!workspace.TryFindNode(info.Key, out var node))
                     continue;
 
                 nodesWithInfos.Add(guid);
@@ -878,7 +876,7 @@ namespace Dynamo.Graph.Workspaces
         /// trace data but do not exist in the current CallSite data.
         /// </summary>
         /// <returns></returns>
-        internal IList<string> GetOrphanedSerializablesAndClearHistoricalTraceData()
+        internal List<string> GetOrphanedSerializablesAndClearHistoricalTraceData()
         {
             var orphans = new List<string>();
 
@@ -889,11 +887,12 @@ namespace Dynamo.Graph.Workspaces
             // then add the serializables for that guid to the list of
             // orphans.
 
+            var nodeLookup = Nodes.Select(n => n.GUID).ToHashSet();
             foreach (var nodeData in historicalTraceData)
             {
                 if (!TryFindNode(nodeData.Key, out _))
                 {
-                    orphans.AddRange(nodeData.Value.SelectMany(CallSite.GetAllSerializablesFromSingleRunTraceData).ToList());
+                    orphans.AddRange(nodeData.Value.SelectMany(CallSite.GetAllSerializablesFromSingleRunTraceData));
                 }
             }
 
