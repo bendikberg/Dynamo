@@ -18,7 +18,7 @@ namespace Dynamo.Tests
 
         public static NodeModel NodeFromWorkspace(this WorkspaceModel ws, Guid guid)
         {
-            return ws.Nodes.FirstOrDefault(node => node.GUID == guid);
+            return ws.FindNode(guid);
         }
 
         public static T NodeFromWorkspace<T>(this WorkspaceModel ws, Guid guid) where T : NodeModel

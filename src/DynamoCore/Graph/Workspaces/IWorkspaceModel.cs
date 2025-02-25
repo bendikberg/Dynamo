@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Dynamo.Graph.Connectors;
 using Dynamo.Graph.Nodes;
@@ -80,5 +80,9 @@ namespace Dynamo.Graph.Workspaces
         /// </summary>
         /// <param name="models">Collection of <see cref="ModelBase"/> objects to record.</param>
         void RecordModelsForModification(IEnumerable<ModelBase> models);
+
+        bool TryFindNode(Guid nodeId, out NodeModel model);
+
+        NodeModel? FindNode(Guid nodeId);
     }
 }

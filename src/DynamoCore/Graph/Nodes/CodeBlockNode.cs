@@ -1106,17 +1106,13 @@ namespace Dynamo.Graph.Nodes
                         {
                             var startPortModel = oldConnector.Start;
                             NodeModel startNode = startPortModel.Owner;
-                            var connector = ConnectorModel.Make(
-                                startNode,
-                                this,
-                                startPortModel.Index,
-                                i);
+
                             //during an undo operation we should set the new input connector
                             //to have the same id as the old connector.
-                            if (context == SaveContext.Undo)
-                            {
-                                connector.GUID = oldConnector.GUID;
-                            }
+                            // This must be done before the connector constructor runs, as it causes portmodel events.
+                            Guid? connectorId = context == SaveContext.Undo ? oldConnector.GUID : null;
+
+                            var connector = ConnectorModel.Make(startNode, this, startPortModel.Index, i, connectorId);
                         }
                         outportConnections[varName] = null;
                     }
@@ -1162,14 +1158,13 @@ namespace Dynamo.Graph.Nodes
                     {
                         var endPortModel = oldConnector.End;
                         NodeModel endNode = endPortModel.Owner;
-                        var connector = ConnectorModel.Make(this, endNode, i, endPortModel.Index);
 
                         // During an undo operation we should set the new output connector
                         // to have the same id as the old connector.
-                        if (context == SaveContext.Undo)
-                        {
-                            connector.GUID = oldConnector.GUID;
-                        }
+                        // This must be done before the connector constructor runs, as it causes portmodel events.
+                        Guid? connectorId = context == SaveContext.Undo ? oldConnector.GUID : null;
+
+                        var connector = ConnectorModel.Make(this, endNode, i, endPortModel.Index, connectorId);
                     }
 
                     outportConnections[varName] = null;

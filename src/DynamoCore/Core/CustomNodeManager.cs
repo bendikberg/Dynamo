@@ -983,7 +983,7 @@ namespace Dynamo.Core
             CustomNodeWorkspaceModel newWorkspace;
 
             Debug.WriteLine("Current workspace has {0} nodes and {1} connectors",
-                currentWorkspace.Nodes.Count(), currentWorkspace.Connectors.Count());
+                currentWorkspace.NodeCount, currentWorkspace.ConnectorCount);
 
             using (undoRecorder.BeginActionGroup())
             {
@@ -1353,7 +1353,7 @@ namespace Dynamo.Core
                 RegisterCustomNodeWorkspace(newWorkspace);
 
                 Debug.WriteLine("Collapsed workspace has {0} nodes and {1} connectors",
-                    newWorkspace.Nodes.Count(), newWorkspace.Connectors.Count());
+                    newWorkspace.NodeCount, newWorkspace.ConnectorCount);
 
                 var collapsedNode = CreateCustomNodeInstance(newId, isTestMode: isTestMode);
                 collapsedNode.X = avgX;

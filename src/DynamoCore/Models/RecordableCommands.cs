@@ -501,7 +501,7 @@ namespace Dynamo.Models
                 Dynamo.Logging.Analytics.TrackTaskFileOperationEvent(
                     FilePath,
                     Logging.Actions.Open,
-                    dynamoModel.CurrentWorkspace.Nodes.Count());
+                    dynamoModel.CurrentWorkspace.NodeCount);
 
                 // If there are unresolved nodes in the opened workspace, log the node names and count
                 var unresolvedNodes = dynamoModel.CurrentWorkspace.Nodes.OfType<DummyNode>();
@@ -601,7 +601,7 @@ namespace Dynamo.Models
                 Dynamo.Logging.Analytics.TrackTaskFileOperationEvent(
                     FilePath,
                     Logging.Actions.Open,
-                    dynamoModel.CurrentWorkspace.Nodes.Count());
+                    dynamoModel.CurrentWorkspace.NodeCount);
 
                 // If there are unresolved nodes in the opened workspace, log the node names and count
                 var unresolvedNodes = dynamoModel.CurrentWorkspace.Nodes.OfType<DummyNode>();
@@ -678,7 +678,7 @@ namespace Dynamo.Models
                 Dynamo.Logging.Analytics.TrackTaskFileOperationEvent(
                     "In memory json file",
                     Logging.Actions.Open,
-                    dynamoModel.CurrentWorkspace.Nodes.Count());
+                    dynamoModel.CurrentWorkspace.NodeCount);
 
                 // If there are unresolved nodes in the opened workspace, log the node names and count
                 var unresolvedNodes = dynamoModel.CurrentWorkspace.Nodes.OfType<DummyNode>();

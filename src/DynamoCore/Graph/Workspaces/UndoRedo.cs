@@ -244,7 +244,7 @@ namespace Dynamo.Graph.Workspaces
                         // or the selection set was not quite set up properly.
                         //
                         var node = model as NodeModel;
-                        Debug.Assert(Nodes.Contains(node));
+                        Debug.Assert(ContainsNode(node));
 
                         bool silentFlag = node.RaisesModificationEvents;
                         node.RaisesModificationEvents = false;
@@ -260,8 +260,7 @@ namespace Dynamo.Graph.Workspaces
                                 foreach (var connectorPin in conn.ConnectorPinModels.ToList())
                                 {
                                     undoRecorder.RecordDeletionForUndo(connectorPin);
-                                    var matchingConnector = Connectors.FirstOrDefault(c => c.GUID == connectorPin.ConnectorId);
-                                    if (matchingConnector is null) return;
+                                    if (!TryFindConnector(connectorPin.ConnectorId, out var matchingConnector)) return;
                                     matchingConnector.ConnectorPinModels.Remove(connectorPin);
                                 }
                             }
@@ -284,8 +283,7 @@ namespace Dynamo.Graph.Workspaces
                             foreach (var connectorPin in connector.ConnectorPinModels.ToList())
                             {
                                 undoRecorder.RecordDeletionForUndo(connectorPin);
-                                var matchingConnector = Connectors.FirstOrDefault(c => c.GUID == connectorPin.ConnectorId);
-                                if (matchingConnector is null) return;
+                                if (!TryFindConnector(connectorPin.ConnectorId, out var matchingConnector)) return;
                                 matchingConnector.ConnectorPinModels.Remove(connectorPin);
                             }
                         }
@@ -293,8 +291,7 @@ namespace Dynamo.Graph.Workspaces
                     else if (model is ConnectorPinModel connectorPinModel)
                     {
                         undoRecorder.RecordDeletionForUndo(connectorPinModel);
-                        var matchingConnector = Connectors.FirstOrDefault(c => c.GUID == connectorPinModel.ConnectorId);
-                        if (matchingConnector is null) return;
+                        if (!TryFindConnector(connectorPinModel.ConnectorId, out var matchingConnector)) return;
                         matchingConnector.ConnectorPinModels.Remove(connectorPinModel);
                         HasUnsavedChanges = true;
                     }
@@ -378,11 +375,7 @@ namespace Dynamo.Graph.Workspaces
             else if (model is ConnectorPinModel connectorPin)
             {
                 // The equivalent of 'deleting' a connectorPin
-                var matchingConnector = Connectors.FirstOrDefault(connector => connector.GUID == connectorPin.ConnectorId);
-                if (matchingConnector is null)
-                {
-                    return;
-                }
+                if (!TryFindConnector(connectorPin.ConnectorId, out var matchingConnector)) return;
                 matchingConnector.ConnectorPinModels.Remove(connectorPin);
             }
             else if (model is NodeModel)
@@ -398,8 +391,7 @@ namespace Dynamo.Graph.Workspaces
                     {
                         foreach (var connPin in conn.ConnectorPinModels.ToList())
                         {
-                            var matchingConnector = Connectors.FirstOrDefault(c => c.GUID == connPin.ConnectorId);
-                            if (matchingConnector is null) return;
+                            if (!TryFindConnector(connPin.ConnectorId, out var matchingConnector)) return;
                             matchingConnector.ConnectorPinModels.Remove(connPin);
                         }
                     }
@@ -470,8 +462,11 @@ namespace Dynamo.Graph.Workspaces
 
             if (typeName.Contains("ConnectorModel"))
             {
-                var connector = NodeGraph.LoadConnectorFromXml(modelData,
-                    Nodes.ToDictionary(node => node.GUID));
+                ConnectorModel connector;
+                lock (nodeDict)
+                {
+                    connector = NodeGraph.LoadConnectorFromXml(modelData, nodeDict);
+                }
 
                 // It is possible that in some cases connector can't be created,
                 // for example, connector connects to a custom node instance
@@ -493,8 +488,7 @@ namespace Dynamo.Graph.Workspaces
             else if (typeName.Contains(nameof(ConnectorPinModel)))
             {
                 var connectorPin = NodeGraph.LoadPinFromXml(modelData);
-                var matchingConnector = Connectors.FirstOrDefault(c => c.GUID == connectorPin.ConnectorId);
-                if (matchingConnector is null) return;
+                if (!TryFindConnector(connectorPin.ConnectorId, out var matchingConnector)) return;
 
                 matchingConnector.AddPin(connectorPin);
             }
@@ -590,25 +584,21 @@ namespace Dynamo.Graph.Workspaces
         /// <returns>Found <see cref="ModelBase"/> object.</returns>
         public ModelBase GetModelInternal(Guid modelGuid)
         {
-            ModelBase foundModel = (Connectors.FirstOrDefault(c => c.GUID == modelGuid)
-                ?? Nodes.FirstOrDefault(node => node.GUID == modelGuid) as ModelBase)
-                ?? (Notes.FirstOrDefault(note => note.GUID == modelGuid)
-                ?? Annotations.FirstOrDefault(annotation => annotation.GUID == modelGuid) as ModelBase
-                ?? Presets.FirstOrDefault(preset => preset.GUID == modelGuid) as ModelBase);
+            if (TryFindConnector(modelGuid, out var conn)) return conn;
+            else if (TryFindNode(modelGuid, out var node)) return node;
+            else if (TryFindNote(modelGuid, out var note)) return note;
+            else if (TryFindAnnotation(modelGuid, out var annotation)) return annotation;
+            else if (Presets.FirstOrDefault(preset => preset.GUID == modelGuid) is ModelBase preset) return preset;
 
-            if(foundModel is null)
+            foreach(var connector in Connectors)
             {
-                foreach(var connector in Connectors)
+                foreach(var pin in connector.ConnectorPinModels)
                 {
-                    foreach(var pin in connector.ConnectorPinModels)
-                    {
-                        if (pin.GUID == modelGuid)
-                            return pin as ModelBase;
-                    }
+                    if (pin.GUID == modelGuid) return pin;
                 }
             }
 
-            return foundModel;
+            return null;
         }
 
         /// <summary>

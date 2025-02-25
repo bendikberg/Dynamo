@@ -373,9 +373,7 @@ namespace Dynamo.ViewModels
                 return;
             }
 
-            var groups = workspace.Annotations;
-            var connector = WorkspaceViewModel.Model.Connectors.FirstOrDefault(c => c.GUID == model.ConnectorId);
-            if (connector == null)
+            if (!WorkspaceViewModel.Model.TryFindConnector(model.ConnectorId, out var connector))
             {
                 return;
             }

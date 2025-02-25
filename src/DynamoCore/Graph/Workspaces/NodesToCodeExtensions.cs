@@ -131,7 +131,7 @@ namespace Dynamo.Graph.Workspaces
             DynamoSelection.Instance.ClearSelection();
             DynamoSelection.Instance.Selection.AddRange(codeBlockNodes);
 
-            Debug.WriteLine(string.Format("Workspace has {0} nodes and {1} connectors after N2C operation.", workspace.Nodes.Count(), workspace.Connectors.Count()));
+            Debug.WriteLine(string.Format("Workspace has {0} nodes and {1} connectors after N2C operation.", workspace.NodeCount, workspace.ConnectorCount));
             workspace.RequestRun();
         }
 

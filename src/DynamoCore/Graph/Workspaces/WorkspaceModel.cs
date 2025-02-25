@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -269,9 +270,10 @@ namespace Dynamo.Graph.Workspaces
         private string description;
         private bool hasUnsavedChanges;
         private bool isReadOnly;
-        private readonly List<NodeModel> nodes;
-        private readonly List<NoteModel> notes;
-        private readonly List<AnnotationModel> annotations;
+        private readonly InsertionOrderedDict<Guid, NodeModel> nodeDict;
+        private readonly InsertionOrderedDict<Guid, NoteModel> noteDict;
+        private readonly InsertionOrderedDict<Guid, AnnotationModel> annotationDict;
+        private readonly InsertionOrderedDict<Guid, ConnectorModel> connectorDict;
         internal readonly List<PresetModel> presets;
         private readonly UndoRedoRecorder undoRecorder;
         private static List<ModelBase> savedModels = null;
@@ -530,9 +532,16 @@ namespace Dynamo.Graph.Workspaces
             }
         }
 
+        /// <summary>
+        ///     Add a connector to the workspace. Noop if the workspace already contains it
+        /// </summary>
         private void RegisterConnector(ConnectorModel connector)
         {
             connector.Deleted += () => OnConnectorDeleted(connector);
+
+            // If this was erroneously added twice, we want to make sure OnConnectorDeleted happens,
+            // but we only want to add it to the dictionary once.
+            connectorDict.TryAdd(connector.GUID, connector);
         }
 
         /// <summary>
@@ -541,6 +550,7 @@ namespace Dynamo.Graph.Workspaces
         public event Action<ConnectorModel> ConnectorDeleted;
         protected virtual void OnConnectorDeleted(ConnectorModel obj)
         {
+            connectorDict.Remove(obj.GUID);
 
             var handler = ConnectorDeleted;
             if (handler != null) handler(obj);
@@ -936,7 +946,7 @@ namespace Dynamo.Graph.Workspaces
             //instead just bail to avoid blocking the UI.
             if (this is HomeWorkspaceModel homeWorkspaceModel && homeWorkspaceModel.RunSettings.RunEnabled && !RunSettings.ForceBlockRun)
             {
-                foreach (var node in nodes)
+                foreach (var node in nodeDict.Values)
                 {
                     externalFilesDictionary.TryGetValue(node.GUID, out var serializedDependencyInfo);
 
@@ -1064,15 +1074,14 @@ namespace Dynamo.Graph.Workspaces
         {
             get
             {
-                IEnumerable<NodeModel> nodesClone;
-                lock (nodes)
+                lock (nodeDict)
                 {
-                    nodesClone = nodes.ToList();
+                    return nodeDict.Values.ToList();
                 }
-
-                return nodesClone;
             }
         }
+
+        public int NodeCount => nodeDict.Count;
 
         public IEnumerable<NodeModel> CurrentSelection
         {
@@ -1084,9 +1093,9 @@ namespace Dynamo.Graph.Workspaces
 
         private void AddNode(NodeModel node)
         {
-            lock (nodes)
+            lock (nodeDict)
             {
-                nodes.Add(node);
+                nodeDict.TryAdd(node.GUID, node);
             }
 
             OnNodeAdded(node);
@@ -1094,9 +1103,13 @@ namespace Dynamo.Graph.Workspaces
 
         private void ClearNodes()
         {
-            lock (nodes)
+            lock (nodeDict)
             {
-                nodes.Clear();
+                nodeDict.Clear();
+            }
+            lock (connectorDict)
+            {
+                connectorDict.Clear();
             }
 
             OnNodesCleared();
@@ -1123,11 +1136,14 @@ namespace Dynamo.Graph.Workspaces
         {
             get
             {
-                return nodes.SelectMany(
-                    node => node.OutPorts.SelectMany(port => port.Connectors))
-                    .Distinct().ToList();
+                lock (connectorDict)
+                {
+                    return connectorDict.Values.ToList();
+                }
             }
         }
+
+        public int ConnectorCount => connectorDict.Count;
 
         /// <summary>
         ///     Returns the notes <see cref="NoteModel"/> collection.
@@ -1136,13 +1152,10 @@ namespace Dynamo.Graph.Workspaces
         {
             get
             {
-                IEnumerable<NoteModel> notesClone;
-                lock (notes)
+                lock (noteDict)
                 {
-                    notesClone = notes.ToList();
+                    return noteDict.Values.ToList();
                 }
-
-                return notesClone;
             }
         }
 
@@ -1155,13 +1168,10 @@ namespace Dynamo.Graph.Workspaces
         {
             get
             {
-                IEnumerable<AnnotationModel> annotationsClone;
-                lock (annotations)
+                lock (annotationDict)
                 {
-                    annotationsClone = annotations.ToList();
+                    return annotationDict.Values.ToList();
                 }
-
-                return annotationsClone;
             }
         }
 
@@ -1353,10 +1363,10 @@ namespace Dynamo.Graph.Workspaces
         {
             guid = Guid.NewGuid();
 
-            this.nodes = new List<NodeModel>(nodes);
-            this.notes = new List<NoteModel>(notes);
-
-            this.annotations = new List<AnnotationModel>(annotations);
+            nodeDict = new(nodes.Select(n => new KeyValuePair<Guid, NodeModel>(n.GUID, n)));
+            noteDict = new(notes.Select(n => new KeyValuePair<Guid, NoteModel>(n.GUID, n)));
+            annotationDict = new(annotations.Select(a => new KeyValuePair<Guid, AnnotationModel>(a.GUID, a)));
+            connectorDict = new();
 
             NodeLibraryDependencies = new List<INodeLibraryDependencyInfo>();
             NodeLocalDefinitions = new List<INodeLibraryDependencyInfo>();
@@ -1384,11 +1394,14 @@ namespace Dynamo.Graph.Workspaces
 
             this.presets = new List<PresetModel>(presets);
             ElementResolver = resolver;
-            foreach (var node in this.nodes)
+            foreach (var (_, node) in this.nodeDict)
+            {
                 RegisterNode(node);
-
-            foreach (var connector in Connectors)
-                RegisterConnector(connector);
+                foreach(var connector in node.AllConnectors)
+                {
+                    RegisterConnector(connector);
+                }
+            }
 
             SetModelEventOnAnnotation();
             WorkspaceEvents.WorkspaceAdded += computeUpstreamNodesWhenWorkspaceAdded;
@@ -1425,11 +1438,11 @@ namespace Dynamo.Graph.Workspaces
                 // becuase if all the nodes are frozen, then updategraphsyncdata task
                 // has nothing to process and the graph will not run. setting silenceModification here
                 // ensure graph runs immediately when any of the node is set to unfreeze.
-                lock (nodes)
+                lock (nodeDict)
                 {
-                    if (nodes != null && nodes.Any() && nodes.All(z => z.IsFrozen))
+                    if (NodeCount > 0 && nodeDict.All(z => z.Value.IsFrozen))
                     {
-                        var firstnode = nodes.First();
+                        var firstnode = nodeDict.First().Value;
                         firstnode.OnRequestSilenceModifiedEvents(false);
                     }
                 }
@@ -1567,6 +1580,62 @@ namespace Dynamo.Graph.Workspaces
             }
         }
 
+        public bool TryFindNode(Guid nodeId, [NotNullWhen(true)] out NodeModel model)
+        {
+            lock (nodeDict)
+            {
+                return nodeDict.TryGetValue(nodeId, out model);
+            }
+        }
+
+        public NodeModel? FindNode(Guid nodeId)
+        {
+            lock (nodeDict)
+            {
+                return nodeDict.TryGetValue(nodeId, out var model) ? model : null;
+            }
+        }
+
+        internal bool ContainsNode(NodeModel model)
+        {
+            lock (nodeDict)
+            {
+                return nodeDict.ContainsKey(model.GUID);
+            }
+        }
+
+        internal bool TryFindNote(Guid nodeId, [NotNullWhen(true)] out NoteModel model)
+        {
+            lock (noteDict)
+            {
+                return noteDict.TryGetValue(nodeId, out model);
+            }
+        }
+
+        internal bool ContainsNote(NoteModel model)
+        {
+            lock (noteDict)
+            {
+                return noteDict.ContainsKey(model.GUID);
+            }
+        }
+
+        internal bool TryFindAnnotation(Guid nodeId, [NotNullWhen(true)] out AnnotationModel model)
+        {
+            lock (annotationDict)
+            {
+                return annotationDict.TryGetValue(nodeId, out model);
+            }
+        }
+
+        internal bool TryFindConnector(Guid nodeId, [NotNullWhen(true)] out ConnectorModel model)
+        {
+            lock (connectorDict)
+            {
+                return connectorDict.TryGetValue(nodeId, out model);
+            }
+        }
+
         /// <summary>
         ///     Adds a node to this workspace.
         /// </summary>
@@ -1574,7 +1643,7 @@ namespace Dynamo.Graph.Workspaces
         /// <param name="centered">Indicates if the node should be placed at the center of workspace.</param>
         internal void AddAndRegisterNode(NodeModel node, bool centered = false)
         {
-            if (nodes.Contains(node))
+            if (ContainsNode(node))
                 return;
 
             RegisterNode(node);
@@ -1635,9 +1704,9 @@ namespace Dynamo.Graph.Workspaces
         /// <param name="dispose"></param>
         internal void RemoveAndDisposeNode(NodeModel model, bool dispose = true)
         {
-            lock (nodes)
+            lock (nodeDict)
             {
-                if (!nodes.Remove(model)) return;
+                if (!nodeDict.Remove(model.GUID)) return;
             }
 
             OnNodeRemoved(model);
@@ -1667,9 +1736,9 @@ namespace Dynamo.Graph.Workspaces
 
         private void AddNote(NoteModel note)
         {
-            lock (notes)
+            lock (noteDict)
             {
-                notes.Add(note);
+                noteDict[note.GUID] = note;
             }
 
             OnNoteAdded(note);
@@ -1698,9 +1767,9 @@ namespace Dynamo.Graph.Workspaces
 
         internal void ClearNotes()
         {
-            lock (notes)
+            lock (noteDict)
             {
-                notes.Clear();
+                noteDict.Clear();
             }
 
             OnNotesCleared();
@@ -1708,18 +1777,18 @@ namespace Dynamo.Graph.Workspaces
 
         internal void RemoveNote(NoteModel note)
         {
-            lock (notes)
+            lock (noteDict)
             {
-                if (!notes.Remove(note)) return;
+                if (!noteDict.Remove(note.GUID)) return;
             }
             OnNoteRemoved(note);
         }
 
         private void AddNewAnnotation(AnnotationModel annotation)
         {
-            lock (annotations)
+            lock (annotationDict)
             {
-                annotations.Add(annotation);
+                annotationDict[annotation.GUID] = annotation;
             }
 
             OnAnnotationAdded(annotation);
@@ -1727,9 +1796,9 @@ namespace Dynamo.Graph.Workspaces
 
         internal void ClearAnnotations()
         {
-            lock (annotations)
+            lock (annotationDict)
             {
-                annotations.Clear();
+                annotationDict.Clear();
             }
 
             OnAnnotationsCleared();
@@ -1737,9 +1806,9 @@ namespace Dynamo.Graph.Workspaces
 
         private void RemoveAnnotation(AnnotationModel annotation)
         {
-            lock (annotations)
+            lock (annotationDict)
             {
-                if (!annotations.Remove(annotation)) return;
+                if (!annotationDict.Remove(annotation.GUID)) return;
             }
             OnAnnotationRemoved(annotation);
         }
@@ -1894,19 +1963,10 @@ namespace Dynamo.Graph.Workspaces
         /// <returns></returns>
         private ModelBase annotationModel_GetModelBase(Guid modelGuid)
         {
-            ModelBase model = null;
-            model = this.Nodes.FirstOrDefault(x => x.GUID == modelGuid);
-
-            if (model == null) //Check if GUID is a Note instead.
-            {
-                model = this.Notes.FirstOrDefault(x => x.GUID == modelGuid);
-            }
-            if (model == null)
-            {
-                model = this.Annotations.FirstOrDefault(x => x.GUID == modelGuid);
-            }
-
-            return model;
+            if (TryFindNode(modelGuid, out var node)) return node;
+            else if (TryFindNote(modelGuid, out var note)) return note;
+            else if (TryFindAnnotation(modelGuid, out var annotation)) return annotation;
+            return null;
         }
 
         internal void ResetWorkspace()
@@ -1951,7 +2011,7 @@ namespace Dynamo.Graph.Workspaces
         /// </summary>
         private void ComputeUpstreamCacheForEntireGraph()
         {
-            var sortedNodes = AstBuilder.TopologicalSort(this.nodes);
+            var sortedNodes = AstBuilder.TopologicalSort(nodeDict.Values);
 
             foreach (var sortedNode in sortedNodes)
             {
@@ -2017,7 +2077,7 @@ namespace Dynamo.Graph.Workspaces
         {
             get
             {
-                return Nodes.Count() > 1 && !HasErrors && !HasNoneGeometryRelatedWarnings;
+                return NodeCount > 1 && !HasErrors && !HasNoneGeometryRelatedWarnings;
             }
         }
 
@@ -2033,7 +2093,7 @@ namespace Dynamo.Graph.Workspaces
         /// <returns></returns>
         internal bool containsXmlDummyNodes()
         {
-            return this.Nodes.OfType<DummyNode>().Where(node => node.OriginalNodeContent is XmlElement).Count() > 0;
+            return this.Nodes.OfType<DummyNode>().Any(node => node.OriginalNodeContent is XmlElement);
         }
 
         /// <summary>
@@ -2444,8 +2504,7 @@ namespace Dynamo.Graph.Workspaces
             foreach (ExtraNodeViewInfo nodeViewInfo in nodeViews)
             {
                 var guidValue = IdToGuidConverter(nodeViewInfo.Id);
-                var nodeModel = Nodes.FirstOrDefault(node => node.GUID == guidValue);
-                if (nodeModel != null)
+                if (TryFindNode(guidValue, out var nodeModel))
                 {
                     if (offsetX == 0.0 && offsetY == 0.0)
                     {
@@ -2499,8 +2558,7 @@ namespace Dynamo.Graph.Workspaces
                 }
 
                 //if this note does not exist, add it to the workspace.
-                var matchingNote = this.Notes.FirstOrDefault(x => x.GUID == noteModel.GUID);
-                if (matchingNote == null)
+                if (!ContainsNote(noteModel))
                 {
                     this.AddNote(noteModel);
                 }
@@ -2524,8 +2582,8 @@ namespace Dynamo.Graph.Workspaces
                 var annotationGuidValue = IdToGuidConverter(annotationViewInfo.Id);
                 var text = annotationViewInfo.Title;
 
-                var pinnedNode = this.Nodes.
-                    FirstOrDefault(x => x.GUID.ToString("N") == annotationViewInfo.PinnedNode);
+                Guid.TryParse(annotationViewInfo.PinnedNode, out var pinnedNodeId);
+                TryFindNode(pinnedNodeId, out var pinnedNode);
 
                 NoteModel noteModel;
                 if (offsetX == 0.0 && offsetY == 0.0)
@@ -2548,10 +2606,9 @@ namespace Dynamo.Graph.Workspaces
                 }
 
                 //if this note does not exist, add it to the workspace.
-                var matchingNote = this.Notes.FirstOrDefault(x => x.GUID == noteModel.GUID);
-                if (matchingNote == null)
+                if (!ContainsNote(noteModel))
                 {
-                    this.AddNote(noteModel);
+                    AddNote(noteModel);
                 }
             }
         }
@@ -2564,8 +2621,7 @@ namespace Dynamo.Graph.Workspaces
             {
                 var connectorGuid = IdToGuidConverter(pinViewInfo.ConnectorGuid);
 
-                var matchingConnector = Connectors.FirstOrDefault(x => x.GUID == connectorGuid);
-                if (matchingConnector is null) { return; }
+                if (!TryFindConnector(connectorGuid, out var matchingConnector)) continue;
 
                 if (offsetX == 0.0 && offsetY == 0.0)
                 {
@@ -2602,65 +2658,40 @@ namespace Dynamo.Graph.Workspaces
 
         private void LoadAnnotation(ExtraAnnotationViewInfo annotationViewInfo)
         {
-            var annotationGuidValue = IdToGuidConverter(annotationViewInfo.Id);
-
-            if (annotationViewInfo.Nodes == null || Annotations.Any(x => x.GUID == annotationGuidValue))
-            {
-                return;
-            }
+            if (annotationViewInfo.Nodes == null) return;
 
             // If count is zero, this is a note, not an annotation
-            if (annotationViewInfo.Nodes.Count() == 0) return;
+            if (!annotationViewInfo.Nodes.Any()) return;
+
+            var annotationGuidValue = IdToGuidConverter(annotationViewInfo.Id);
+            if (TryFindAnnotation(annotationGuidValue, out var _)) return;
 
 
-            var text = annotationViewInfo.Title;
-
-            // Create a collection of nodes in the given annotation
+            // Create collections of nodes, notes and groups in the given annotation
             var nodes = new List<NodeModel>();
-            foreach (string nodeId in annotationViewInfo.Nodes)
-            {
-                var guidValue = IdToGuidConverter(nodeId);
-                if (guidValue == null)
-                    continue;
-
-                // NOTE: Some nodes may be annotations and not be found here
-                var nodeModel = Nodes.FirstOrDefault(node => node.GUID == guidValue);
-                if (nodeModel == null)
-                    continue;
-
-                nodes.Add(nodeModel);
-            }
-
-            // Create a collection of notes in the given annotation
             var notes = new List<NoteModel>();
-            foreach (string noteId in annotationViewInfo.Nodes)
-            {
-                var guidValue = IdToGuidConverter(noteId);
-                if (guidValue == null)
-                    continue;
-
-                // NOTE: Some nodes may not be annotations and not be found here
-                var noteModel = Notes.FirstOrDefault(note => note.GUID == guidValue);
-                if (noteModel == null)
-                    continue;
-
-                notes.Add(noteModel);
-            }
-
             var groups = new List<AnnotationModel>();
-            foreach (var groupId in annotationViewInfo.Nodes)
+            foreach (string maybeGuid in annotationViewInfo.Nodes)
             {
-                var guidValue = IdToGuidConverter(groupId);
-                if (guidValue == null) continue;
+                var guidValue = IdToGuidConverter(maybeGuid);
+                if (guidValue == Guid.Empty) continue; // the guid cannot be null, but it can be empty
 
-                var group = Annotations.FirstOrDefault(g => g.GUID == guidValue);
-                if (group == null) continue;
-
-                groups.Add(group);
+                if (TryFindNode(guidValue, out var nodeModel))
+                {
+                    nodes.Add(nodeModel);
+                }
+                else if (TryFindNote(guidValue, out var noteModel))
+                {
+                    notes.Add(noteModel);
+                }
+                else if (TryFindAnnotation(guidValue, out var group))
+                {
+                    groups.Add(group);
+                }
             }
 
             var annotationModel = new AnnotationModel(nodes, notes, groups);
-            annotationModel.AnnotationText = text;
+            annotationModel.AnnotationText = annotationViewInfo.Title;
             annotationModel.AnnotationDescriptionText = annotationViewInfo.DescriptionText;
             annotationModel.IsExpanded = annotationViewInfo.IsExpanded;
             annotationModel.FontSize = annotationViewInfo.FontSize;
@@ -2673,18 +2704,13 @@ namespace Dynamo.Graph.Workspaces
             annotationModel.ModelBaseRequested += annotationModel_GetModelBase;
             annotationModel.Disposed += (_) => annotationModel.ModelBaseRequested -= annotationModel_GetModelBase;
 
-            //if this group/annotation does not exist, add it to the workspace.
-            var matchingAnnotation = this.Annotations.FirstOrDefault(x => x.GUID == annotationModel.GUID);
-            if (matchingAnnotation == null)
-            {
-                this.AddNewAnnotation(annotationModel);
-            }
+            // this group/annotation does not exist in workspace (checked upon entering method), it's safe to add
+            AddNewAnnotation(annotationModel);
         }
 
         internal static Guid IdToGuidConverter(string id)
         {
-            Guid deterministicGuid;
-            if (!Guid.TryParse(id, out deterministicGuid))
+            if (!Guid.TryParse(id, out var deterministicGuid))
             {
                 Debug.WriteLine("The id was not a guid, converting to a guid");
                 deterministicGuid = GuidUtility.Create(GuidUtility.UrlNamespace, id);

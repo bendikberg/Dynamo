@@ -694,9 +694,7 @@ namespace Dynamo.Graph.Workspaces
             var workspace = updateTask.TargetedWorkspace;
             foreach (var warning in warnings)
             {
-                var guid = warning.Key;
-                var node = workspace.Nodes.FirstOrDefault(n => n.GUID == guid);
-                if (node == null)
+                if (!workspace.TryFindNode(warning.Key, out var node))
                     continue;
 
                 // Block Infos updates during the many errors/warnings/notifications added here
@@ -714,9 +712,7 @@ namespace Dynamo.Graph.Workspaces
             // Update node info message.
             foreach (var info in updateTask.RuntimeInfos)
             {
-                var guid = info.Key;
-                var node = workspace.Nodes.FirstOrDefault(n => n.GUID == guid);
-                if (node == null)
+                if (!workspace.TryFindNode(info.Key, out var node))
                     continue;
 
                 nodesWithInfos.Add(guid);
@@ -894,9 +890,7 @@ namespace Dynamo.Graph.Workspaces
             var nodeLookup = Nodes.Select(n => n.GUID).ToHashSet();
             foreach (var nodeData in historicalTraceData)
             {
-                var nodeGuid = nodeData.Key;
-
-                if (!nodeLookup.Contains(nodeGuid))
+                if (!TryFindNode(nodeData.Key, out _))
                 {
                     orphans.AddRange(nodeData.Value.SelectMany(CallSite.GetAllSerializablesFromSingleRunTraceData));
                 }

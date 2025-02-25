@@ -3174,7 +3174,7 @@ namespace Dynamo.Models
                         var pinnedNode =
                             modelLookup.TryGetValue(note.PinnedNode.GUID, out pinned)
                             ? pinned as NodeModel
-                            : CurrentWorkspace.Nodes.FirstOrDefault(x => x.GUID == note.PinnedNode.GUID);
+                            : CurrentWorkspace.FindNode(note.PinnedNode.GUID);
                         noteModel = new NoteModel(note.X, note.Y, note.Text, Guid.NewGuid(), pinnedNode);
                     }
                     //Store the old note as Key and newnote as value.
@@ -3221,11 +3221,11 @@ namespace Dynamo.Models
                     let startNode =
                             modelLookup.TryGetValue(c.Start.Owner.GUID, out start)
                                 ? start as NodeModel
-                                : CurrentWorkspace.Nodes.FirstOrDefault(x => x.GUID == c.Start.Owner.GUID)
+                                : CurrentWorkspace.FindNode(c.Start.Owner.GUID)
                     let endNode =
                         modelLookup.TryGetValue(c.End.Owner.GUID, out end)
                             ? end as NodeModel
-                            : CurrentWorkspace.Nodes.FirstOrDefault(x => x.GUID == c.End.Owner.GUID)
+                            : CurrentWorkspace.FindNode(c.End.Owner.GUID)
 
                     // Don't make a connector if either end is null.
                     where startNode != null && endNode != null
@@ -3689,7 +3689,7 @@ namespace Dynamo.Models
         {
             foreach (var node in nodes)
             {
-                if (currentWorkspace.Nodes.Any(n => n.GUID == node.GUID))
+                if (currentWorkspace.TryFindNode(node.GUID, out _))
                 {
                     continue;  // prevent loading the same node twice
                 }
@@ -3709,9 +3709,7 @@ namespace Dynamo.Models
                 var startNode = connectorModel.Start.Owner;
                 var endNode = connectorModel.End.Owner;
 
-                var usedConnectors = currentWorkspace.Connectors.Where(n => n.GUID == connectorModel.GUID);
-
-                foreach (var connector in usedConnectors)
+                if (currentWorkspace.TryFindConnector(connectorModel.GUID, out var connector))
                 {
                     connector.Delete();
                 }
@@ -3732,9 +3730,8 @@ namespace Dynamo.Models
                 if (annotation.Nodes.Any()) continue;
 
                 var guidValue = WorkspaceModel.IdToGuidConverter(annotation.Id);
-                var matchingNote = CurrentWorkspace.Notes.FirstOrDefault(x => x.GUID == guidValue);
 
-                if (matchingNote != null)
+                if (CurrentWorkspace.TryFindNote(guidValue, out var matchingNote))
                 {
                     result.Add(matchingNote);
                 }
@@ -3825,7 +3822,7 @@ namespace Dynamo.Models
         {
             foreach (var node in nodes)
             {
-                if (currentWorkspace.Nodes.Any(n => n.GUID == node.GUID))
+                if (currentWorkspace.TryFindNode(node.GUID, out _))
                 {
                     // if at least one node is inside the workspace, return true
                     return true;
@@ -3841,7 +3838,9 @@ namespace Dynamo.Models
 
             foreach (var note in notes)
             {
-                if (currentWorkspace.Notes.Any(n => n.GUID.ToString() == note.Id))
+                if (note.Id == null) continue;
+
+                if (Guid.TryParse(note.Id, out var noteId) && currentWorkspace.TryFindNote(noteId, out _))
                 {
                     // if at least one node is inside the workspace, return true
                     return true;
